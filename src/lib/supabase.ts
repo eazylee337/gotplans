@@ -3,33 +3,24 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-// Create a mock client if environment variables are missing
-let supabase: any
+console.log('Environment check:', {
+  hasUrl: !!supabaseUrl,
+  hasKey: !!supabaseKey,
+  urlPrefix: supabaseUrl ? supabaseUrl.substring(0, 20) + '...' : 'undefined',
+  keyPrefix: supabaseKey ? supabaseKey.substring(0, 20) + '...' : 'undefined'
+})
 
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey)
-} else {
-  // Mock Supabase client for demo purposes
-  supabase = {
-    auth: {
-      getSession: () => Promise.resolve({ data: { session: null } }),
-      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
-      signUp: () => Promise.resolve({ error: null }),
-      signInWithPassword: () => Promise.resolve({ error: null }),
-      signOut: () => Promise.resolve({ error: null })
-    },
-    from: () => ({
-      select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [] }) }) }),
-      insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: null, error: { message: 'Demo mode - database not connected' } }) }) }),
-      update: () => ({ eq: () => Promise.resolve({ error: null }) })
-    }),
-    functions: {
-      invoke: () => Promise.resolve({ data: null, error: { message: 'Demo mode - edge functions not available' } })
-    }
-  }
+if (!supabaseUrl || !supabaseKey) {
+  console.error('Missing Supabase environment variables:', {
+    VITE_SUPABASE_URL: !!supabaseUrl,
+    VITE_SUPABASE_ANON_KEY: !!supabaseKey
+  })
 }
 
-export { supabase }
+export const supabase = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseKey || 'placeholder_key'
+)
 
 // Types for our database schema
 export interface UserGoal {

@@ -15,6 +15,16 @@ function App() {
   const [subTasks, setSubTasks] = useState<Record<string, SubTask[]>>({})
   const [isGenerating, setIsGenerating] = useState(false)
   const [savedGoals, setSavedGoals] = useState<UserGoal[]>([])
+  const [appError, setAppError] = useState<string | null>(null)
+
+  // Debug component mounting
+  useEffect(() => {
+    console.log('App component mounted')
+    console.log('Environment variables:', {
+      supabaseUrl: import.meta.env.VITE_SUPABASE_URL ? 'set' : 'missing',
+      supabaseKey: import.meta.env.VITE_SUPABASE_ANON_KEY ? 'set' : 'missing'
+    })
+  }, [])
 
   // Load saved goals when user signs in
   useEffect(() => {
@@ -31,46 +41,73 @@ function App() {
   const loadSavedGoals = async () => {
     if (!user) return
 
-    const { data: goals } = await supabase
-      .from('user_goals')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
+    try {
+      const { data: goals, error } = await supabase
+        .from('user_goals')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
 
-    if (goals) {
-      setSavedGoals(goals)
+      if (error) {
+        console.error('Error loading goals:', error)
+        setAppError(`Database error: ${error.message}`)
+        return
+      }
+
+      if (goals) {
+        setSavedGoals(goals)
+      }
+    } catch (error) {
+      console.error('Error in loadSavedGoals:', error)
+      setAppError(`Failed to load goals: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
   const loadGoalPlan = async (goal: UserGoal) => {
     setCurrentGoal(goal)
 
-    // Load plans for this goal
-    const { data: goalPlans } = await supabase
-      .from('task_plans')
-      .select('*')
-      .eq('goal_id', goal.id)
-      .order('sequence_order')
+    try {
+      // Load plans for this goal
+      const { data: goalPlans, error: plansError } = await supabase
+        .from('task_plans')
+        .select('*')
+        .eq('goal_id', goal.id)
+        .order('sequence_order')
 
-    if (goalPlans) {
-      setPlans(goalPlans)
-
-      // Load sub-tasks for each plan
-      const subTasksData: Record<string, SubTask[]> = {}
-      
-      for (const plan of goalPlans) {
-        const { data: planSubTasks } = await supabase
-          .from('sub_tasks')
-          .select('*')
-          .eq('plan_id', plan.id)
-          .order('sequence_order')
-
-        if (planSubTasks) {
-          subTasksData[plan.id] = planSubTasks
-        }
+      if (plansError) {
+        console.error('Error loading plans:', plansError)
+        setAppError(`Failed to load plans: ${plansError.message}`)
+        return
       }
-      
-      setSubTasks(subTasksData)
+
+      if (goalPlans) {
+        setPlans(goalPlans)
+
+        // Load sub-tasks for each plan
+        const subTasksData: Record<string, SubTask[]> = {}
+        
+        for (const plan of goalPlans) {
+          const { data: planSubTasks, error: subTasksError } = await supabase
+            .from('sub_tasks')
+            .select('*')
+            .eq('plan_id', plan.id)
+            .order('sequence_order')
+
+          if (subTasksError) {
+            console.error('Error loading sub-tasks:', subTasksError)
+            continue
+          }
+
+          if (planSubTasks) {
+            subTasksData[plan.id] = planSubTasks
+          }
+        }
+        
+        setSubTasks(subTasksData)
+      }
+    } catch (error) {
+      console.error('Error in loadGoalPlan:', error)
+      setAppError(`Failed to load goal plan: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -81,6 +118,7 @@ function App() {
     }
 
     setIsGenerating(true)
+    setAppError(null)
 
     try {
       // Generate the plan using our AI service
@@ -99,7 +137,7 @@ function App() {
         .single()
 
       if (goalError || !savedGoal) {
-        throw new Error('Failed to save goal')
+        throw new Error(`Failed to save goal: ${goalError?.message || 'Unknown error'}`)
       }
 
       // Save plans to database
@@ -114,7 +152,7 @@ function App() {
         .select()
 
       if (plansError || !savedPlans) {
-        throw new Error('Failed to save plans')
+        throw new Error(`Failed to save plans: ${plansError?.message || 'Unknown error'}`)
       }
 
       // Save sub-tasks to database
@@ -130,10 +168,14 @@ function App() {
       })
 
       if (allSubTasks.length > 0) {
-        const { data: savedSubTasks } = await supabase
+        const { data: savedSubTasks, error: subTasksError } = await supabase
           .from('sub_tasks')
           .insert(allSubTasks)
           .select()
+
+        if (subTasksError) {
+          console.error('Error saving sub-tasks:', subTasksError)
+        }
 
         // Organize sub-tasks by plan_id
         const subTasksByPlan: Record<string, SubTask[]> = {}
@@ -153,7 +195,7 @@ function App() {
 
     } catch (error) {
       console.error('Error generating plan:', error)
-      alert('Failed to generate plan. Please try again.')
+      setAppError(`Failed to generate plan: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setIsGenerating(false)
     }
@@ -166,7 +208,11 @@ function App() {
         .update({ completed })
         .eq('id', subTaskId)
 
-      if (error) throw error
+      if (error) {
+        console.error('Error updating sub-task:', error)
+        setAppError(`Failed to update task: ${error.message}`)
+        return
+      }
 
       // Update local state
       setSubTasks(prev => {
@@ -179,7 +225,8 @@ function App() {
         return updated
       })
     } catch (error) {
-      console.error('Error updating sub-task:', error)
+      console.error('Error in handleToggleSubTask:', error)
+      setAppError(`Failed to update task: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -187,6 +234,31 @@ function App() {
     setCurrentGoal(null)
     setPlans([])
     setSubTasks({})
+    setAppError(null)
+  }
+
+  // Error boundary
+  if (appError) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="max-w-md mx-auto bg-white rounded-lg shadow-md p-8">
+          <div className="text-center">
+            <div className="text-red-500 text-6xl mb-4">⚠️</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Application Error</h2>
+            <p className="text-gray-600 mb-6">{appError}</p>
+            <button
+              onClick={() => {
+                setAppError(null)
+                window.location.reload()
+              }}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (authLoading) {
@@ -227,7 +299,7 @@ function App() {
             </div>
             
             <div className="flex items-center space-x-4">
-              {/* BUILT on bolt.new Badge */}
+              {/* Built with Bolt.new Badge */}
               <a
                 href="https://bolt.new"
                 target="_blank"
@@ -235,9 +307,18 @@ function App() {
                 className="group flex items-center space-x-2 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full text-sm font-medium hover:from-purple-600 hover:to-pink-600 transition-all duration-200 shadow-md hover:shadow-lg"
               >
                 <span className="text-xs">⚡</span>
-                <span>BUILT on bolt.new</span>
+                <span>Built with Bolt.new</span>
                 <ExternalLink className="w-3 h-3 opacity-75 group-hover:opacity-100 transition-opacity" />
               </a>
+
+              {/* Environment status indicator */}
+              <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-yellow-100 text-yellow-800'
+              }`}>
+                {import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY ? '🟢 Connected' : '🟡 Demo Mode'}
+              </div>
 
               {user ? (
                 <>
